@@ -136,7 +136,8 @@ func TestGetPoint_Found(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
-		w.Write([]byte(`{"result":[{"id":42,"payload":{"count":3,"cause":"x"}}]}`))
+		// Real Qdrant returns a single point object under "result" (not an array).
+		w.Write([]byte(`{"result":{"id":42,"payload":{"count":3,"cause":"x"}}}`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -164,6 +165,26 @@ func TestGetPoint_NotFound(t *testing.T) {
 	payload, err := c.GetPoint(context.Background(), "errs", 99)
 	if err != nil {
 		t.Fatalf("GetPoint 404 should not error, got %v", err)
+	}
+	if payload != nil {
+		t.Fatalf("expected nil payload, got %+v", payload)
+	}
+}
+
+func TestGetPoint_ResultNull(t *testing.T) {
+	// Some Qdrant responses return {"result":null} for a missing point; treat
+	// it as not-found (nil, nil), not an error.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/collections/errs/points/77", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"result":null,"status":"ok"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewQdrant(srv.URL, 5*time.Second)
+	payload, err := c.GetPoint(context.Background(), "errs", 77)
+	if err != nil {
+		t.Fatalf("GetPoint null result should not error, got %v", err)
 	}
 	if payload != nil {
 		t.Fatalf("expected nil payload, got %+v", payload)

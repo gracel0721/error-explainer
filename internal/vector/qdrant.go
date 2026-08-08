@@ -63,11 +63,16 @@ type searchResult struct {
 	} `json:"result"`
 }
 
+// getPointResult is the GET /collections/{name}/points/{id} envelope. Unlike
+// search/scroll (whose result is an array), GET-by-id returns a single point
+// object under "result" — or null/404 when the id doesn't exist.
 type getPointResult struct {
-	Result []struct {
-		ID      any            `json:"id"`
-		Payload map[string]any  `json:"payload"`
-	} `json:"result"`
+	Result *pointPayload `json:"result"`
+}
+
+type pointPayload struct {
+	ID      any            `json:"id"`
+	Payload map[string]any `json:"payload"`
 }
 
 type upsertBody struct {
@@ -214,10 +219,10 @@ func (c *QdrantClient) GetPoint(ctx context.Context, name string, id uint64) (ma
 	if err := json.NewDecoder(resp.Body).Decode(&gpr); err != nil {
 		return nil, fmt.Errorf("decoding qdrant get-point response: %w", err)
 	}
-	if len(gpr.Result) == 0 {
+	if gpr.Result == nil {
 		return nil, nil
 	}
-	return gpr.Result[0].Payload, nil
+	return gpr.Result.Payload, nil
 }
 
 // UpsertPoint writes (or replaces) the point with id, vec, and payload. wait=true
