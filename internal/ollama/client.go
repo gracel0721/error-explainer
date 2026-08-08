@@ -94,6 +94,59 @@ func (c *Client) Chat(ctx context.Context, model string, messages []Message) (st
 	return chat.Message.Content, nil
 }
 
+// Embed returns the embedding vector for input using model. It posts to
+// /api/embed (the current Ollama endpoint) and classifies failures the same
+// way Chat does — network errors become ConnectionError and a 404 becomes
+// ModelNotFoundError — so callers can reuse the friendly-error guidance.
+func (c *Client) Embed(ctx context.Context, model, input string) ([]float64, error) {
+	body, err := json.Marshal(EmbedRequest{Model: model, Input: input})
+	if err != nil {
+		return nil, err
+	}
+
+	url := c.BaseURL + "/api/embed"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, &ConnectionError{Err: err}
+	}
+	defer resp.Body.Close()
+
+	var emb EmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&emb); err != nil {
+		return nil, fmt.Errorf("decoding Ollama embed response: %w", err)
+	}
+
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return nil, &ModelNotFoundError{Model: model}
+	case resp.StatusCode >= 400:
+		if emb.Error != "" {
+			return nil, fmt.Errorf("ollama embed returned %d: %s", resp.StatusCode, emb.Error)
+		}
+		return nil, fmt.Errorf("ollama embed returned status %d", resp.StatusCode)
+	}
+
+	if len(emb.Embedding) == 0 && len(emb.Embeddings) == 0 {
+		return nil, fmt.Errorf("ollama embed returned an empty vector")
+	}
+	if len(emb.Embedding) > 0 {
+		return emb.Embedding, nil
+	}
+	// Some Ollama versions return "embeddings" (array of arrays) even for a
+	// single input; take the first (and only) vector.
+	if len(emb.Embeddings[0]) == 0 {
+		return nil, fmt.Errorf("ollama embed returned an empty vector")
+	}
+	return emb.Embeddings[0], nil
+}
+
 // IsConnection reports whether err is a ConnectionError.
 func IsConnection(err error) bool {
 	var ce *ConnectionError
