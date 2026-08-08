@@ -51,15 +51,24 @@ SOURCE" block with line-numbered file excerpts around the frames and the
 definitions of the functions named in the trace. When these blocks are present,
 use them to ground EVIDENCE and INVESTIGATE: cite file:line references from the
 source, and prefer fixes that match the actual code shown. If those blocks are
-absent, analyze the raw input as before.`
+absent, analyze the raw input as before.
+
+A "PRIOR OCCURRENCES" block may also be present, listing similar errors seen
+before (with a similarity score, occurrence count, last-seen date, and the
+prior PROBABLE CAUSE / POTENTIAL FIXES captured for them). When that block is
+present, use it to inform PROBABLE CAUSE and POTENTIAL FIXES, and note the
+recurrence explicitly in WHAT HAPPENED or PROBABLE CAUSE (e.g. "this error has
+occurred N times before, last on <date>"). Only reference priors actually
+listed in the block; do not invent unlisted prior occurrences. If the block is
+absent, treat the error as a first occurrence.`
 }
 
 // User builds the user message: the origin note plus optional structured
-// context (parsed JSON) and source blocks, then the raw error/log text.
-// When contextBlock and sourceBlock are empty their sections are omitted, so
-// callers without --repo (or with no parseable structure) get the same prompt
-// as before.
-func User(text, origin string, truncated bool, contextBlock, sourceBlock string) string {
+// context (parsed JSON), source, and prior-occurrences blocks, then the raw
+// error/log text. When a block is empty its section is omitted, so callers
+// without --repo (or with no parseable structure, or no history matches) get
+// the same prompt as before.
+func User(text, origin string, truncated bool, contextBlock, sourceBlock, priorBlock string) string {
 	var note string
 	switch origin {
 	case "inline":
@@ -85,6 +94,10 @@ func User(text, origin string, truncated bool, contextBlock, sourceBlock string)
 		b.WriteString("--- RELEVANT SOURCE ---\n")
 		b.WriteString(sourceBlock)
 		b.WriteString("\n--- END SOURCE ---\n\n")
+	}
+	if priorBlock != "" {
+		b.WriteString(priorBlock)
+		b.WriteString("\n\n")
 	}
 	b.WriteString("--- INPUT START ---\n")
 	b.WriteString(text)

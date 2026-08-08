@@ -148,6 +148,33 @@ func TestContextJSON_NonEmpty(t *testing.T) {
 	}
 }
 
+func TestSignature_Grouped(t *testing.T) {
+	// Two near-duplicate panics differing only in line numbers should share a
+	// signature (line numbers are normalized away) and yield a representative.
+	a := "panic: runtime error: index out of range [1] with length 0\nmain.go:12 +0x10"
+	b := "panic: runtime error: index out of range [1] with length 0\nmain.go:99 +0x20"
+	sigA, repA := Signature(a)
+	sigB, repB := Signature(b)
+	if sigA == "" || sigA != sigB {
+		t.Fatalf("sigs should match and be non-empty: %q vs %q", sigA, sigB)
+	}
+	if repA == "" || repB == "" {
+		t.Fatalf("representatives should be non-empty: %q %q", repA, repB)
+	}
+}
+
+func TestSignature_Fallback(t *testing.T) {
+	// A short message with no block markers and no dedup still produces a
+	// stable signature via the normalize fallback.
+	sig, rep := Signature("something went wrong here")
+	if sig == "" || !strings.Contains(sig, "something went wrong here") {
+		t.Fatalf("fallback sig = %q", sig)
+	}
+	if rep == "" {
+		t.Fatalf("fallback rep = %q", rep)
+	}
+}
+
 // itoa avoids strconv import in the test helper above.
 func itoa(n int) string {
 	if n == 0 {

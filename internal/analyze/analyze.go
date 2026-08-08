@@ -426,6 +426,29 @@ func normalize(block string) string {
 	return strings.TrimSpace(s)
 }
 
+// Signature returns a deterministic collision key for the input (sig) and a
+// short representative string (rep) suitable for embedding/storage. When
+// GroupErrors finds at least one group, it uses the top group's normalized
+// Signature and capped Representative; otherwise it falls back to normalizing
+// the first 4KB of raw text for the signature and the first 500 chars for the
+// representative. This gives history a stable key without duplicating the
+// normalization logic.
+func Signature(text string) (sig, rep string) {
+	groups := GroupErrors(text)
+	if len(groups) > 0 {
+		return groups[0].Signature, groups[0].Representative
+	}
+	head := text
+	if len(head) > 4096 {
+		head = head[:4096]
+	}
+	rep = text
+	if len(rep) > 500 {
+		rep = rep[:500]
+	}
+	return normalize(head), rep
+}
+
 // atoi is a panic-free integer parse (returns 0 on failure).
 func atoi(s string) int {
 	n := 0
