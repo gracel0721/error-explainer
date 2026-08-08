@@ -1,6 +1,9 @@
 package prompt
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Section markers the model must emit, exactly as written, so the renderer
 // can split the output into structured sections. Keep these uppercase and
@@ -40,11 +43,23 @@ Rules:
 - Be specific and reference the actual input text in EVIDENCE.
 - Keep each section tight; prefer bullets in INVESTIGATE and POTENTIAL FIXES.
 - If the input is too sparse to be certain, say so in PROBABLE CAUSE and keep EVIDENCE honest.
-- Output plain text only. Do not use Markdown headings, bold, or code fences around sections.`
+- Output plain text only. Do not use Markdown headings, bold, or code fences around sections.
+
+The user message may also contain a "PARSED CONTEXT" JSON block (detected
+language, stack frames, and deduplicated error groups) and/or a "RELEVANT
+SOURCE" block with line-numbered file excerpts around the frames and the
+definitions of the functions named in the trace. When these blocks are present,
+use them to ground EVIDENCE and INVESTIGATE: cite file:line references from the
+source, and prefer fixes that match the actual code shown. If those blocks are
+absent, analyze the raw input as before.`
 }
 
-// User builds the user message: the origin note plus the raw error/log text.
-func User(text, origin string, truncated bool) string {
+// User builds the user message: the origin note plus optional structured
+// context (parsed JSON) and source blocks, then the raw error/log text.
+// When contextBlock and sourceBlock are empty their sections are omitted, so
+// callers without --repo (or with no parseable structure) get the same prompt
+// as before.
+func User(text, origin string, truncated bool, contextBlock, sourceBlock string) string {
 	var note string
 	switch origin {
 	case "inline":
@@ -57,5 +72,22 @@ func User(text, origin string, truncated bool) string {
 	if truncated {
 		note += "\nNOTE: the input exceeded the size limit and was truncated; analyze the portion provided."
 	}
-	return note + "\n\n--- INPUT START ---\n" + text + "\n--- INPUT END ---"
+
+	var b strings.Builder
+	b.WriteString(note)
+	b.WriteString("\n\n")
+	if contextBlock != "" {
+		b.WriteString("--- PARSED CONTEXT ---\n")
+		b.WriteString(contextBlock)
+		b.WriteString("\n--- END CONTEXT ---\n\n")
+	}
+	if sourceBlock != "" {
+		b.WriteString("--- RELEVANT SOURCE ---\n")
+		b.WriteString(sourceBlock)
+		b.WriteString("\n--- END SOURCE ---\n\n")
+	}
+	b.WriteString("--- INPUT START ---\n")
+	b.WriteString(text)
+	b.WriteString("\n--- INPUT END ---")
+	return b.String()
 }

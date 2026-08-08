@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gvleverett/error-explainer/internal/analyze"
 	"github.com/gvleverett/error-explainer/internal/input"
 	"github.com/gvleverett/error-explainer/internal/ollama"
 	"github.com/gvleverett/error-explainer/internal/prompt"
 	"github.com/gvleverett/error-explainer/internal/render"
+	"github.com/gvleverett/error-explainer/internal/repo"
+	"github.com/gvleverett/error-explainer/internal/source"
 	"github.com/spf13/cobra"
 )
 
@@ -23,12 +27,24 @@ var (
 	flagHost    string
 	flagTimeout time.Duration
 	flagRaw     bool
+	flagRepo    string
+	flagContext int
 )
 
 // envOr returns the env var value when set and non-empty, else def.
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+// envOrInt returns the env var int value when set and parseable, else def.
+func envOrInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
@@ -52,6 +68,8 @@ func init() {
 	rootCmd.Flags().StringVar(&flagHost, "host", envOr("OLLAMA_HOST", "http://localhost:11434"), "Ollama base URL (env: OLLAMA_HOST)")
 	rootCmd.Flags().DurationVar(&flagTimeout, "timeout", 120*time.Second, "HTTP request timeout for Ollama")
 	rootCmd.Flags().BoolVar(&flagRaw, "raw", false, "print the unrendered model output (debug)")
+	rootCmd.Flags().StringVar(&flagRepo, "repo", envOr("EXPLAIN_REPO", ""), "path to a git repo to extract relevant source from (env: EXPLAIN_REPO); empty disables extraction")
+	rootCmd.Flags().IntVar(&flagContext, "context", envOrInt("EXPLAIN_CONTEXT_LINES", 10), "lines of source context around each stack frame")
 
 	// Setting Version makes cobra register and handle --version automatically.
 	rootCmd.Version = Version
@@ -78,9 +96,26 @@ func run(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: input exceeded %d bytes and was truncated\n", input.MaxBytes)
 	}
 
+	// Analyze the input for language, stack frames, and deduplicated error
+	// groups. This is always-on but self-gating: ctx.JSON() returns "" when
+	// nothing useful is found, so simple inputs add no prompt block.
+	ctx := analyze.Analyze(res.Text)
+	contextBlock := ctx.JSON()
+
+	// Source extraction is gated behind --repo. It uses the parsed frames to
+	// read windows around file:line plus symbol definitions found via git grep.
+	var sourceBlock string
+	if flagRepo != "" {
+		if r, rerr := repo.Find(flagRepo); rerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: --repo disabled (%v); continuing without source extraction\n", rerr)
+		} else {
+			sourceBlock = source.Format(source.Extract(r, ctx, flagContext))
+		}
+	}
+
 	messages := []ollama.Message{
 		{Role: "system", Content: prompt.System()},
-		{Role: "user", Content: prompt.User(res.Text, res.Origin, res.Truncated)},
+		{Role: "user", Content: prompt.User(res.Text, res.Origin, res.Truncated, contextBlock, sourceBlock)},
 	}
 
 	client := ollama.New(flagHost, flagTimeout)

@@ -67,7 +67,35 @@ go build ./... 2>&1 | explain-error      # analyze piped stderr/stdout
 | `--host` | `http://localhost:11434` | `OLLAMA_HOST` | Ollama base URL |
 | `--timeout` | `120s` | — | HTTP request timeout (local inference can be slow) |
 | `--raw` | `false` | — | print the unrendered model output (debug) |
+| `--repo` | — | `EXPLAIN_REPO` | path to a git repo to extract relevant source from; empty disables |
+| `--context` | `10` | `EXPLAIN_CONTEXT_LINES` | lines of source context around each stack frame |
 | `-v`, `--version` | — | — | print the version |
+
+### Source-aware analysis (`--repo`)
+
+Pass `--repo <path>` (often `--repo .`) and `explain-error` lets the model see
+the code that produced the error. It:
+
+1. parses the stack trace and detects the language (Go, Python, Java, Node,
+   Ruby, Rust, .NET),
+2. groups and deduplicates repeated log lines,
+3. resolves each `file:line` frame against the repo (handling absolute,
+   container-prefixed, and module-path traces), and
+4. extracts a line-numbered window around each frame **plus** the definition of
+   each function named in the trace (found via `git grep`).
+
+That context is handed to the model as a `PARSED CONTEXT` JSON block plus a
+`RELEVANT SOURCE` block, so its EVIDENCE and INVESTIGATE sections cite real
+`file:line` references from your code. Everything is best-effort and byte-capped
+(64 KB of source, 5 files); missing files, a non-git path, or git not installed
+all degrade to "no source block" with at most a stderr warning. Language
+detection, grouping, and dedup run even without `--repo` (they self-gate and
+add a context block only when the input has parseable structure).
+
+```sh
+explain-error --repo . -m "$(cat crash.log)"
+go build ./... 2>&1 | explain-error --repo .
+```
 
 ### Output
 
@@ -105,6 +133,9 @@ error-explainer/
     root.go              # cobra root command, flags, orchestration, spinner
   internal/
     input/input.go       # gather text from -m / file / stdin (+ TTY detection, size cap)
+    analyze/analyze.go   # language detection, stack parsing, log grouping, dedup
+    repo/repo.go         # git: find root, resolve frame paths, read lines, grep
+    source/source.go     # extract frame windows + symbol defs, format, byte-cap
     ollama/client.go     # HTTP client to /api/chat, typed errors
     ollama/model.go      # request/response types
     prompt/prompt.go     # system + user messages, fixed section markers
